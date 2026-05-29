@@ -47,6 +47,19 @@ So the number itself needed checking. I reverted the NAT gate so the gateway is 
 
 <sub>What the tests still do not prove, stated plainly: mocked providers never call AWS, so these verify the module's logic and not that AWS accepts the resulting plan. And `enable_nat_gateway = true` has been planned but never applied, because it costs about $32 a month per AZ and this portfolio does not spend money. Both written up in [LAB-NOTES.md](./LAB-NOTES.md) and [findings/](./findings/).</sub>
 
+## Decisions
+
+| Chose | Over | Because |
+|---|---|---|
+| `enable_nat_gateway = false` by default | `true`, as most public VPC modules ship | ~$32/month per AZ, and more importantly it puts an outbound path into the tier that is supposed to have none. Most workloads that "need" one need a free gateway endpoint. Turning on egress should be a decision someone made, not one they inherited. |
+| One private route table **per AZ** | one shared table | With NAT off this is cosmetic. The moment egress is added, a shared table routes every AZ through one gateway — turning a cost optimisation into a single point of failure in the tier that existed to be redundant. |
+| Reject `az_count = 1` at plan time | accepting it and documenting the risk | One AZ is not highly available regardless of what else is configured. A module with an opinion should refuse input that contradicts it. |
+| Reject CIDRs smaller than /20 | letting `cidrsubnet` fail | The subnet arithmetic cannot fit, and the failure would otherwise surface as a confusing error deep inside `cidrsubnet` rather than as a clear rejection. |
+| Allow only S3 and DynamoDB gateway endpoints | any endpoint the caller names | Everything else is an interface endpoint that bills hourly. A module should not hand somebody a surprise line on their invoice. |
+| `mock_provider` tests, zero credentials | tests that need an AWS account | The first suite reported `9 passed` and could only run on my laptop — without credentials it was `0 passed, 1 failed, 8 skipped`, and eight skips read as fine in CI. A module nobody can test without an AWS account is a module nobody tests. |
+| Break the module on purpose, three ways | trusting the green badge | Reverting the NAT gate, collapsing the route tables, and dropping the subnet offset each had to be caught — and the unaffected tests had to stay quiet. That is what proves a suite discriminates rather than just passes. |
+| An opinionated module that refuses input | matching `terraform-aws-modules/vpc` flexibility | That module supports every topology anyone has asked for, which is correct for a public module. This one has one owner and a known set of consumers, where holding an opinion is the better trade. |
+
 ## What I did not build
 
 Terraform provides the module system, the test framework, and `mock_provider`. The interface design, the choice of which defaults are safe, the validation rules, the tests, and the deliberate breaks that verify them are mine.
