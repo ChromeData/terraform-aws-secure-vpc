@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="556" height="570" viewBox="0 0 556 570" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="13">
+<rect width="556" height="570" rx="8" fill="#0d1117" stroke="#30363d"/>
+<rect width="556" height="34" rx="8" fill="#161b22"/>
+<rect y="26" width="556" height="8" fill="#161b22"/>
+<circle cx="18" cy="17" r="5" fill="#ff5f56"/>
+<circle cx="36" cy="17" r="5" fill="#ffbd2e"/>
+<circle cx="54" cy="17" r="5" fill="#27c93f"/>
+<text x="72" y="22" fill="#8b949e">breaking the module on purpose to prove the tests work</text>
+<text x="16" y="54" fill="#8b949e" xml:space="preserve">a green test suite is not evidence until you have watched it fail</text>
+<text x="16" y="94" xml:space="preserve"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">terraform test        # with every AWS credential unset</tspan></text>
+<text x="16" y="114" fill="#3fb950" xml:space="preserve">  9 passed, 0 failed.</text>
+<text x="16" y="154" fill="#8b949e" xml:space="preserve">so break the module on purpose. NAT gateway always on,</text>
+<text x="16" y="174" fill="#8b949e" xml:space="preserve">the &quot;helpful default&quot; that quietly gives private subnets a way out</text>
+<text x="16" y="214" fill="#c9d1d9" xml:space="preserve">  -  count = var.enable_nat_gateway ? var.az_count : 0</text>
+<text x="16" y="234" fill="#c9d1d9" xml:space="preserve">  +  count = var.az_count</text>
+<text x="16" y="274" xml:space="preserve"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">terraform test</tspan></text>
+<text x="16" y="294" fill="#f85149" xml:space="preserve">  run &quot;defaults_have_no_internet_egress&quot;...           fail</text>
+<text x="16" y="314" fill="#f85149" xml:space="preserve">  run &quot;private_route_tables_have_no_default_route&quot;... fail</text>
+<text x="16" y="334" fill="#3fb950" xml:space="preserve">  run &quot;spans_multiple_azs_by_default&quot;...              pass</text>
+<text x="16" y="354" fill="#3fb950" xml:space="preserve">  run &quot;rejects_single_az&quot;...                          pass</text>
+<text x="16" y="374" fill="#3fb950" xml:space="preserve">  run &quot;rejects_cidr_too_small_to_subnet&quot;...           pass</text>
+<text x="16" y="394" fill="#3fb950" xml:space="preserve">  run &quot;rejects_invalid_name&quot;...                       pass</text>
+<text x="16" y="414" fill="#3fb950" xml:space="preserve">  run &quot;rejects_interface_endpoint_service&quot;...         pass</text>
+<text x="16" y="434" fill="#3fb950" xml:space="preserve">  run &quot;nat_can_be_enabled_deliberately&quot;...            pass</text>
+<text x="16" y="454" fill="#3fb950" xml:space="preserve">  run &quot;subnets_do_not_overlap&quot;...                     pass</text>
+<text x="16" y="474" fill="#f85149" xml:space="preserve">  Failure! 7 passed, 2 failed.</text>
+<text x="16" y="514" fill="#d29922" xml:space="preserve">  caught by the two tests that exist for it, and the other seven</text>
+<text x="16" y="534" fill="#d29922" xml:space="preserve">  stayed quiet. an assertion that fires on every change is noise.</text>
+</svg>
