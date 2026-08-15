@@ -1,0 +1,109 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# No AWS credentials anywhere in this file, and that is the point. The suite
+# uses mock_provider, so it runs on a fork, on a laptop, and here, identically.
+# A module that can only be tested by someone holding an AWS account is a
+# module nobody tests.
+
+jobs:
+  test:
+    name: Module tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+      - run: terraform test
+
+  positive-control:
+    name: Prove the tests can fail
+    runs-on: ubuntu-latest
+    # A green suite proves nothing on its own. A test file with nine assertions
+    # that can never fail reports exactly the same "9 passed" as one that
+    # works, and I have shipped that mistake before in this portfolio: a
+    # scanner that crashed and got scored as clean, a lint config whose path
+    # filter matched zero files, a pytest skip guard in a module that never
+    # gets collected.
+    #
+    # So this job breaks the module on purpose and fails the build if the
+    # suite does NOT notice. It is the assertion about the assertions.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform init -backend=false
+
+      - name: baseline must be green
+        run: terraform test
+
+      - name: break 1, NAT gateway always on
+        run: |
+          cp main.tf /tmp/main.tf.orig
+          sed -i 's/var\.enable_nat_gateway ? var\.az_count : 0/var.az_count/' main.tf
+          if terraform test; then
+            echo "::error::Suite passed with NAT forced on. The tests do not check the default."
+            cp /tmp/main.tf.orig main.tf
+            exit 1
+          fi
+          echo "caught, as expected"
+          cp /tmp/main.tf.orig main.tf
+
+      - name: break 2, one shared private route table instead of per-AZ
+        run: |
+          cp main.tf /tmp/main.tf.orig
+          perl -0pi -e 's/(resource "aws_route_table" "private" \{\n  count  = )var\.az_count/${1}1/' main.tf
+          sed -i 's/route_table_id = aws_route_table\.private\[count\.index\]\.id/route_table_id = aws_route_table.private[0].id/' main.tf
+          if terraform test; then
+            echo "::error::Suite passed with a shared private route table. The per-AZ guarantee is untested."
+            cp /tmp/main.tf.orig main.tf
+            exit 1
+          fi
+          echo "caught, as expected"
+          cp /tmp/main.tf.orig main.tf
+
+      - name: break 3, subnet arithmetic overlaps
+        run: |
+          cp main.tf /tmp/main.tf.orig
+          sed -i 's/cidrsubnet(var\.cidr_block, 4, i + var\.az_count)/cidrsubnet(var.cidr_block, 4, i)/' main.tf
+          if terraform test; then
+            echo "::error::Suite passed with overlapping subnet CIDRs. The arithmetic is untested."
+            cp /tmp/main.tf.orig main.tf
+            exit 1
+          fi
+          echo "caught, as expected"
+          cp /tmp/main.tf.orig main.tf
+
+      - name: restored, must be green again
+        # Guards against a break that silently failed to apply, which would
+        # make the steps above pass for the wrong reason.
+        run: |
+          git diff --exit-code main.tf
+          terraform test
+
+  examples:
+    name: Examples plan cleanly
+    runs-on: ubuntu-latest
+    # Examples are documentation, and documentation rots. These get validated
+    # so a renamed variable breaks the build instead of breaking a reader.
+    strategy:
+      matrix:
+        example: [minimal, complete]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform -chdir=examples/${{ matrix.example }} init -backend=false
+      - run: terraform -chdir=examples/${{ matrix.example }} validate

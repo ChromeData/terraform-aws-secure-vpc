@@ -1,0 +1,151 @@
+POSITIVE CONTROLS FOR THE MODULE TEST SUITE
+===========================================
+
+The suite reports 9 passed, 0 failed. On its own that number means nothing. A
+test file with nine assertions that can never fail reports exactly the same
+thing, and I have shipped that mistake before in this portfolio: a scanner
+that crashed and got scored as "no findings", a lint config that matched zero
+files and reported clean.
+
+So the rule here is that a green result is not evidence until something has
+been seen to fail. Below are three deliberate breaks, each one a mistake a
+person would actually make, and what the suite did about them.
+
+
+-------------------------------------------------------------------------------
+FIRST, THE PROBLEM THE SUITE ITSELF HAD
+-------------------------------------------------------------------------------
+
+The first version of these tests passed on my machine and could not run
+anywhere else.
+
+  $ terraform test          # no AWS credentials in the environment
+
+  Error: Retrieving AWS account details: validating provider credentials:
+  retrieving caller identity from STS: operation error STS: GetCallerIdentity,
+  https response error StatusCode: 403, api error InvalidClientTokenId:
+  The security token included in the request is invalid.
+
+  Failure! 0 passed, 1 failed, 8 skipped.
+
+Even with command = plan, the AWS provider validates credentials at init.
+Note the shape of that result: eight SKIPPED, one failed. Skips read as
+"nothing to worry about" in a CI summary while proving nothing at all.
+
+That makes the module untestable by anyone who does not have an AWS account
+wired up, which means untested by everyone, which means every consumer
+inherits whatever broke.
+
+Fixed with mock_provider, which removes the dependency completely: no
+credentials, no API calls, no cost, same result on a laptop and in CI.
+
+  $ env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_PROFILE \
+        -u AWS_REGION -u AWS_DEFAULT_REGION \
+        AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null \
+        terraform test
+
+  Success! 9 passed, 0 failed.
+
+The tradeoff is real and worth naming. Mocked data proves the module's logic,
+not that AWS accepts the resulting plan. The examples directory and a real
+apply cover the other half. These two kinds of testing are not substitutes for
+each other and anyone who tells you the mocked suite is sufficient is selling
+something.
+
+
+-------------------------------------------------------------------------------
+CONTROL 1  --  the helpful default
+-------------------------------------------------------------------------------
+
+Break: removed the enable_nat_gateway gate, so NAT is always created. This is
+the single most common shape of this mistake. It is not malicious, it is
+somebody making the module "just work" for their use case, and the cost is
+that every consumer silently gains an egress path out of the tier that was
+supposed to have none, plus about $32 a month per AZ.
+
+    -  count = var.enable_nat_gateway ? var.az_count : 0
+    +  count = var.az_count
+
+Result:
+
+    run "defaults_have_no_internet_egress"...          fail
+    run "private_route_tables_have_no_default_route"...fail
+    run "spans_multiple_azs_by_default"...             pass
+    run "rejects_single_az"...                         pass
+    run "rejects_cidr_too_small_to_subnet"...          pass
+    run "rejects_invalid_name"...                      pass
+    run "rejects_interface_endpoint_service"...        pass
+    run "nat_can_be_enabled_deliberately"...           pass
+    run "subnets_do_not_overlap"...                    pass
+
+    Failure! 7 passed, 2 failed.
+
+Caught by the two tests that exist for it. The other seven stayed green, which
+matters as much as the failures: assertions that fire on any change at all are
+noise, and people start ignoring them.
+
+
+-------------------------------------------------------------------------------
+CONTROL 2  --  the cost optimisation that removes the redundancy
+-------------------------------------------------------------------------------
+
+Break: one shared private route table instead of one per AZ. This looks like
+tidying up. It is what the lab it was extracted from originally did.
+
+    -  count  = var.az_count      # aws_route_table.private
+    +  count  = 1
+
+Result:
+
+    run "spans_multiple_azs_by_default"...     fail
+    run "nat_can_be_enabled_deliberately"...   fail
+    run "subnets_do_not_overlap"...            skip
+
+    Failure! 6 passed, 2 failed, 1 skipped
+
+Caught. With NAT off this change is harmless, which is exactly why it survives
+review. The moment egress is added, every AZ routes through one gateway and
+the redundant tier has a single point of failure in it.
+
+The skip on the last test is honest: that run never executed because the file
+aborted, and it is reported as a skip rather than folded into the pass count.
+
+
+-------------------------------------------------------------------------------
+CONTROL 3  --  the arithmetic
+-------------------------------------------------------------------------------
+
+Break: dropped the offset so private subnets reuse the public CIDR range.
+
+    -  cidrsubnet(var.cidr_block, 4, i + var.az_count)
+    +  cidrsubnet(var.cidr_block, 4, i)
+
+Result:
+
+    run "subnets_do_not_overlap"...  fail
+
+    Failure! 8 passed, 1 failed.
+
+Caught, and caught at plan time. Without this test the failure surfaces during
+apply as an AWS InvalidSubnet.Conflict, which points at the API call rather
+than at the line of arithmetic that caused it. The difference between those
+two error messages is most of an afternoon.
+
+
+-------------------------------------------------------------------------------
+RESTORED
+-------------------------------------------------------------------------------
+
+    Success! 9 passed, 0 failed.
+
+Three breaks, three catches, and the unaffected tests stayed quiet each time.
+The green result now means something.
+
+What is still NOT covered, stated plainly so nobody mistakes this for more
+than it is:
+
+  - Whether AWS accepts the plan. Mocked providers never call the API.
+  - Whether the resources behave correctly once running. That needs an apply.
+  - enable_nat_gateway = true has never been applied for real, because it
+    costs about $32 a month per AZ and this portfolio does not spend money.
+    The plan is verified; the running behaviour is not.
